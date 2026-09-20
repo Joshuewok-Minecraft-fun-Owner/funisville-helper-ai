@@ -22,7 +22,7 @@
     {
       "binding": "DB",
       "database_name": "stream-agent-db",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+      "database_id": "fefe954c-71e0-4cc3-97c2-c4a923cd8217"
     }
   ],
 
@@ -48,7 +48,7 @@
   ],
 
   "vars": {
-    "TWITCH_CHANNEL": "REPLACE_WITH_YOUR_CHANNEL_LOGIN",
+    "TWITCH_CHANNEL": "funiswokodeneer",
     "DETECTION_INTERVAL_SECONDS": "25",
     // Auto-request a Meld clip (via /pending-clips) only above this
     // confidence - keep it higher than you'd accept for the reviewable
