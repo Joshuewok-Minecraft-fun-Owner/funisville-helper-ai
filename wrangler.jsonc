@@ -38,14 +38,6 @@
     "binding": "MEDIA"
   },
 
-  // Optional: only needed if you want to store final highlight
-  // clips or exported transcripts somewhere durable.
-  "r2_buckets": [
-    {
-      "binding": "R2",
-      "bucket_name": "stream-agent-assets"
-    }
-  ],
 
   "vars": {
     "TWITCH_CHANNEL": "funiswokodeneer",
