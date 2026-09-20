@@ -18,6 +18,22 @@ Every ~25 seconds while you're live, the `StreamSession` Durable Object:
 4. Sends all three to an LLM and asks: "does this window look like a
    highlight?" Flagged windows get written to D1 with a short reason.
 
+**No Twitch app, no registration, no 2FA required for any of this.**
+A scheduled check runs every 2 minutes and asks the same
+no-registration-needed Twitch endpoint "is this channel live right
+now?" - when the answer flips, that's what starts/stops a session.
+(There's an optional, faster alternative using Twitch's official
+EventSub webhooks, but it requires registering a Twitch app - which
+Twitch gates behind 2FA on your account - so it's off by default; see
+"Going faster later" below if you want it.)
+
+When the stream ends, a post-stream job collapses near-duplicate
+flagged windows (the rolling loop can flag several consecutive ~25s
+windows for one longer moment) and asks an LLM to turn the list into
+short, skimmable **stream notes** - stored in D1 and, if you set
+`DISCORD_WEBHOOK_URL`, posted straight to Discord. Read them back any
+time via `GET /notes?streamId=...`.
+
 Chat itself is read live by the same Durable Object, straight from
 Twitch IRC (anonymous, read-only, no OAuth needed) over a hibernatable
 WebSocket - it's only "active" (and billed) for the moment it's
@@ -46,25 +62,17 @@ stream.
 npm install
 npx wrangler d1 create stream-agent-db      # copy the id into wrangler.jsonc
 npm run db:migrate:remote
-npx wrangler secret put TWITCH_EVENTSUB_SECRET
 npx wrangler secret put MELD_BRIDGE_TOKEN
 ```
 
-Fill in `TWITCH_CLIENT_ID` and `TWITCH_CHANNEL` in `wrangler.jsonc`.
+Fill in `TWITCH_CHANNEL` in `wrangler.jsonc` (your channel's login,
+lowercase - the part in your Twitch URL).
 
-### 2. Twitch app + EventSub
+That's it for Twitch setup - no app registration, no 2FA, nothing
+else needed. The cron trigger in `wrangler.jsonc` handles live
+detection on its own once deployed.
 
-- Register an app at https://dev.twitch.tv/console to get a client ID.
-- Subscribe to `stream.online` and `stream.offline` for your channel,
-  pointing the webhook at `https://<your-worker>.workers.dev/twitch/eventsub`.
-  (The subscription-creation call itself needs a server-to-server
-  Twitch API request with an app access token - a one-time script, not
-  part of this Worker.)
-- **Add signature verification** to `handleEventSub` in `src/index.ts`
-  before going live for real - the scaffold skips it for brevity, but
-  an unverified webhook endpoint will accept forged requests.
-
-### 3. Chat ingestion
+### 2. Chat ingestion
 
 Handled automatically - the `StreamSession` DO connects to Twitch IRC
 itself on `/start` and reconnects if it ever drops. Nothing to set up
@@ -72,7 +80,7 @@ here beyond `TWITCH_CHANNEL` in `wrangler.jsonc`. The `/chat` HTTP
 route still exists if you ever want to forward messages from a
 separate bot instead, but it's optional now.
 
-### 4. Meld + hotkey bridge (optional, for manual marking + AI-triggered clips)
+### 3. Meld + hotkey bridge (optional, for manual marking + AI-triggered clips)
 
 ```
 cd local-bridge
@@ -85,27 +93,38 @@ Confirm Meld's local WebSocket port in Meld's settings and update
 `http://localhost:4545/hotkey`, or uncomment the global-hotkey option
 in the script.
 
-### 5. Deploy
+### 4. Deploy
 
 ```
 npx wrangler deploy
 ```
 
+## Going faster later (optional)
+
+The 2-minute polling above is simple and needs zero Twitch account
+requirements, but it's not instant. If you eventually want push
+notifications the second you go live/offline instead:
+
+1. Register an app at https://dev.twitch.tv/console (requires 2FA on
+   your Twitch account - this is Twitch's requirement, not this
+   project's).
+2. Add `TWITCH_CLIENT_ID` back under `vars` in `wrangler.jsonc`, and
+   run `npx wrangler secret put TWITCH_EVENTSUB_SECRET`.
+3. Uncomment the `/twitch/eventsub` route in `src/index.ts` (it's
+   already there, commented out) and point a real EventSub
+   subscription at it - that subscription-creation call needs a
+   server-to-server Twitch API request with an app access token, a
+   one-time script not included here.
+4. You can keep the cron trigger running alongside it as a fallback,
+   or remove it - your call.
+
 ## What's intentionally left as a next step
 
-- **Post-stream jobs** (`stream.offline` handler has a comment marking
-  where to queue this) - generating a written "stream notes" summary
-  from the day's flagged windows, and any cleanup/dedup of
-  near-duplicate highlight windows.
-- **Hype Trains** - these arrive via a separate EventSub topic
-  (`channel.hype_train.*`), not IRC, so they're not yet labeled as
-  system events the way raids/gift-bombs are. Same pattern would
-  apply if you add that subscription later.
-- **Reconnect backoff** - the IRC reconnect-on-drop logic retries
-  immediately; fine for a scaffold, but a real deployment should add
-  a short backoff so a bad patch of connectivity doesn't hammer
-  Twitch's IRC servers with rapid reconnects.
+- **Hype Train subscription** - only relevant if you set up the
+  optional EventSub path above; the *handling* code for it is already
+  in `index.ts`, it just needs the subscription itself created.
 
-Everything else from the original stub list - IRC chat listening,
-EventSub signature verification, and the AI-triggered `/pending-clips`
-path - is built and wired in.
+Everything else - live-status polling (no Twitch app needed), IRC
+chat listening (with exponential-backoff reconnects), the AI-triggered
+`/pending-clips` path, post-stream notes generation, and a dashboard
+at `/dashboard?streamId=...` to view it all - is built and wired in.

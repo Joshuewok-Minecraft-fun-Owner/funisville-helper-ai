@@ -48,17 +48,28 @@
   ],
 
   "vars": {
-    "TWITCH_CLIENT_ID": "REPLACE_WITH_YOUR_TWITCH_CLIENT_ID",
     "TWITCH_CHANNEL": "REPLACE_WITH_YOUR_CHANNEL_LOGIN",
     "DETECTION_INTERVAL_SECONDS": "25",
     // Auto-request a Meld clip (via /pending-clips) only above this
     // confidence - keep it higher than you'd accept for the reviewable
     // list, since this one skips your judgment entirely.
     "AUTO_CLIP_CONFIDENCE_THRESHOLD": "0.75"
+  },
+
+  // Checks every 2 minutes whether TWITCH_CHANNEL is live, using the
+  // no-registration-required flow in twitch.ts. This is what starts
+  // and stops a stream session - no Twitch Developer app, no
+  // EventSub webhook, no 2FA requirement needed for the default setup.
+  "triggers": {
+    "crons": ["*/2 * * * *"]
   }
 
   // Secrets (set with `wrangler secret put <NAME>`, do not put here):
-  //   TWITCH_EVENTSUB_SECRET   - verifies EventSub webhook signatures
-  //   DISCORD_WEBHOOK_URL      - optional, for "job ready" notifications
   //   MELD_BRIDGE_TOKEN        - shared secret the local bridge script uses
+  //   DISCORD_WEBHOOK_URL      - optional, for "notes ready" notifications
+  //
+  // Only needed if you later switch to the EventSub webhook path
+  // instead of polling (see handleEventSub in src/index.ts):
+  //   TWITCH_CLIENT_ID / TWITCH_EVENTSUB_SECRET - also add
+  //   TWITCH_CLIENT_ID back under "vars" above if you go that route.
 }

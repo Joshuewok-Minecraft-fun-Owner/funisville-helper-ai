@@ -15,6 +15,8 @@ interface Env {
 }
 
 const IRC_WS_URL = "https://irc-ws.chat.twitch.tv/"; // fetch+Upgrade, not a real HTTPS request
+const IRC_BACKOFF_BASE_SECONDS = 10;
+const IRC_BACKOFF_MAX_SECONDS = 300; // cap at 5 minutes between attempts
 
 interface ChatEvent {
   ts: number;
@@ -50,9 +52,16 @@ export class StreamSession {
       const { streamId } = await request.json<{ streamId: string }>();
       this.streamId = streamId;
       await this.state.storage.put("streamId", streamId);
+      await this.state.storage.delete("ircReconnectAttempts");
+      await this.state.storage.delete("ircNextReconnectAt");
       const intervalMs = Number(this.env.DETECTION_INTERVAL_SECONDS || "25") * 1000;
       await this.state.storage.setAlarm(Date.now() + intervalMs);
-      await this.connectToTwitchIrc();
+      try {
+        await this.connectToTwitchIrc();
+      } catch (err) {
+        console.error("initial IRC connect failed, will retry via alarm", err);
+        await this.scheduleIrcReconnect();
+      }
       return new Response("started");
     }
 
@@ -115,6 +124,11 @@ export class StreamSession {
 
     const intervalSeconds = Number(this.env.DETECTION_INTERVAL_SECONDS || "25");
 
+    // The alarm is already ticking on a regular cadence, so it doubles
+    // as our backoff clock for IRC reconnects - no separate timer, no
+    // held-open sleep burning duration billing.
+    await this.maybeReconnectIrc();
+
     try {
       await this.runDetectionCycle(intervalSeconds);
     } catch (err) {
@@ -125,6 +139,34 @@ export class StreamSession {
 
     // Re-arm for the next cycle.
     await this.state.storage.setAlarm(Date.now() + intervalSeconds * 1000);
+  }
+
+  /** Reconnect to Twitch IRC if we're not currently connected and any backoff has elapsed. */
+  private async maybeReconnectIrc() {
+    if (this.state.getWebSockets("irc").length > 0) return; // already connected
+
+    const nextAttemptAt = (await this.state.storage.get<number>("ircNextReconnectAt")) ?? 0;
+    if (Date.now() < nextAttemptAt) return; // still backing off
+
+    try {
+      await this.connectToTwitchIrc();
+      await this.state.storage.delete("ircReconnectAttempts");
+      await this.state.storage.delete("ircNextReconnectAt");
+    } catch (err) {
+      console.error("IRC reconnect attempt failed", err);
+      await this.scheduleIrcReconnect();
+    }
+  }
+
+  /** Bump the reconnect attempt counter and push the next-allowed-attempt time out exponentially. */
+  private async scheduleIrcReconnect() {
+    const attempts = ((await this.state.storage.get<number>("ircReconnectAttempts")) ?? 0) + 1;
+    const delaySeconds = Math.min(
+      IRC_BACKOFF_BASE_SECONDS * 2 ** (attempts - 1),
+      IRC_BACKOFF_MAX_SECONDS
+    );
+    await this.state.storage.put("ircReconnectAttempts", attempts);
+    await this.state.storage.put("ircNextReconnectAt", Date.now() + delaySeconds * 1000);
   }
 
   private async runDetectionCycle(windowSeconds: number) {
@@ -201,8 +243,7 @@ export class StreamSession {
     const resp = await fetch(IRC_WS_URL, { headers: { Upgrade: "websocket" } });
     const ws = (resp as any).webSocket as WebSocket | undefined;
     if (!ws) {
-      console.error("failed to establish Twitch IRC websocket");
-      return;
+      throw new Error("failed to establish Twitch IRC websocket (no upgrade returned)");
     }
     this.state.acceptWebSocket(ws, ["irc"]);
     ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands");
@@ -241,13 +282,15 @@ export class StreamSession {
     }
   }
 
-  /** Required hook for hibernatable WebSockets - reconnect if the stream is still live. */
+  /** Required hook for hibernatable WebSockets - schedule a backed-off reconnect if the stream is still live. */
   async webSocketClose(ws: WebSocket, code: number, reason: string) {
     const streamId = await this.state.storage.get<string>("streamId");
     if (streamId && code !== 1000) {
       // Not a deliberate stop (that sends code 1000) - Twitch dropped
-      // us or the connection hiccuped. Reconnect.
-      await this.connectToTwitchIrc();
+      // us or the connection hiccuped. Don't reconnect inline here -
+      // just record that we need to, and let the next alarm tick
+      // (maybeReconnectIrc) pick it up once any backoff has elapsed.
+      await this.scheduleIrcReconnect();
     }
   }
 

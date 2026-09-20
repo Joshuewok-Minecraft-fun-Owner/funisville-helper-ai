@@ -4,14 +4,18 @@
  * Two kinds of API here, worth knowing apart:
  *
  * 1. Official Twitch API (Helix + EventSub) - documented, stable,
- *    used for "did the stream start/end" and reading chat via IRC.
+ *    but requires registering an app in the Twitch Developer Console,
+ *    which in turn requires 2FA on your Twitch account. Not used by
+ *    default in this project (see isChannelLive below) - only needed
+ *    if you later want instant push notifications instead of polling.
  *
  * 2. The GQL access-token + usher HLS flow below - this is the same
  *    internal mechanism Twitch's own web player (and tools like
  *    streamlink/yt-dlp) use to fetch playable video/audio. It's not
- *    a published, versioned API, so it can change without notice.
- *    We're only ever using it to read our own public broadcast, but
- *    flag this clearly since it's the one "unofficial" piece here.
+ *    a published, versioned API, so it can change without notice,
+ *    but it needs no registration or account requirements at all -
+ *    it's what both the audio/video pulls AND live-status polling
+ *    use here.
  */
 
 const GQL_ENDPOINT = "https://gql.twitch.tv/gql";
@@ -57,6 +61,21 @@ async function getLivePlaybackToken(channel: string): Promise<PlaybackAccessToke
   const token = json?.data?.streamPlaybackAccessToken;
   if (!token) throw new Error("Twitch GQL response missing playback token");
   return { value: token.value, signature: token.signature };
+}
+
+/**
+ * Cheap live-status check using the same no-registration-required GQL
+ * flow as everything else here. Twitch returns a null playback token
+ * when the channel isn't currently live, which getLivePlaybackToken
+ * surfaces as a thrown error - caught here and turned into `false`.
+ */
+export async function isChannelLive(channel: string): Promise<boolean> {
+  try {
+    await getLivePlaybackToken(channel);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 interface HlsVariant {
