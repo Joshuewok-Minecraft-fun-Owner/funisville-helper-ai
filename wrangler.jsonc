@@ -38,6 +38,15 @@
     "binding": "MEDIA"
   },
 
+  {
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+      }
+    }
+  }
+
 
   "vars": {
     "TWITCH_CHANNEL": "funiswokodeneer",
